@@ -67,33 +67,62 @@ func errorCreatingFlatDBCollection(name string, err error) error {
 	return fmt.Errorf("error creating FlatDBCollection %s: %w", name, err)
 }
 
+type FlatDBModel[T any] struct {
+	Data T `json:"data"`
+
+	ID uint64 `json:"ID"`
+}
+
+func (c *FlatDBCollection[T]) GetByID(id uint64) (FlatDBModel[T], error) {
+	path := documentFilePath(c.dir, documentFileName(id))
+
+	f, err := os.Open(path)
+	if err != nil {
+		return FlatDBModel[T]{}, errorGettingDocumentByID(id, err)
+	}
+	defer f.Close()
+
+	bufReader := bufio.NewReader(f)
+	bytes, err := io.ReadAll(bufReader)
+	if err != nil {
+		return FlatDBModel[T]{}, errorGettingDocumentByID(id, err)
+	}
+
+	result := FlatDBModel[T]{}
+	if err := json.Unmarshal(bytes, &result); err != nil {
+		return result, errorGettingDocumentByID(id, err)
+	}
+
+	return result, nil
+}
+
+func errorGettingDocumentByID(id uint64, err error) error {
+	return fmt.Errorf("error getting document with id %d: %w", id, err)
+}
+
 func (c *FlatDBCollection[T]) Insert(data *T) (InsertResult, error) {
-	bytes, err := json.Marshal(data)
-	if err != nil {
-		return InsertResult{}, errInsertingIntoCollection(c.name, err)
-	}
 
-	return c.insertBytes(bytes)
-}
-
-func (c *FlatDBCollection[T]) insertInterface(data interface{}) (InsertResult, error) {
-	bytes, err := json.Marshal(data)
-	if err != nil {
-		return InsertResult{}, errInsertingIntoCollection(c.name, err)
-	}
-
-	return c.insertBytes(bytes)
-}
-
-func (c *FlatDBCollection[T]) insertBytes(data []byte) (InsertResult, error) {
 	id, err := GetNextID(c.idFile)
 	if err != nil {
 		return InsertResult{}, errInsertingIntoCollection(c.name, err)
 	}
 
+	model := FlatDBModel[T]{
+		Data: *data,
+		ID:   id,
+	}
+	bytes, err := json.Marshal(model)
+	if err != nil {
+		return InsertResult{}, errInsertingIntoCollection(c.name, err)
+	}
+
+	return c.insertBytes(bytes, id)
+}
+
+func (c *FlatDBCollection[T]) insertBytes(data []byte, id uint64) (InsertResult, error) {
 	fileName := documentFileName(id)
 
-	docFilePath := filepath.Join(c.dir, fileName)
+	docFilePath := documentFilePath(c.dir, fileName)
 
 	f, err := os.Create(docFilePath) // TODO: think about permissions
 	if err != nil {
@@ -112,6 +141,10 @@ func (c *FlatDBCollection[T]) insertBytes(data []byte) (InsertResult, error) {
 	}
 
 	return InsertResult{Id: id}, nil
+}
+
+func documentFilePath(dir string, filename string) string {
+	return filepath.Join(dir, filename)
 }
 
 func errInsertingIntoCollection(collection string, err error) error {
