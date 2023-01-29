@@ -3,6 +3,7 @@ package GoFlatDB
 import (
 	"bufio"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,7 +24,7 @@ type InsertResult struct {
 	Id uint64
 }
 
-type FlatDBCollection struct {
+type FlatDBCollection[T any] struct {
 	name string
 	dir  string
 
@@ -32,7 +33,7 @@ type FlatDBCollection struct {
 	idFile *os.File
 }
 
-func NewFlatDBCollection(dir string, logger *zap.Logger) (*FlatDBCollection, error) {
+func NewFlatDBCollection[T any](dir string, logger *zap.Logger) (*FlatDBCollection[T], error) {
 	name := filepath.Base(dir)
 
 	idFilePath := filepath.Join(dir, "id.txt")
@@ -54,7 +55,7 @@ func NewFlatDBCollection(dir string, logger *zap.Logger) (*FlatDBCollection, err
 		}
 	}
 
-	return &FlatDBCollection{
+	return &FlatDBCollection[T]{
 		name:   name,
 		dir:    dir,
 		logger: logger,
@@ -66,7 +67,25 @@ func errorCreatingFlatDBCollection(name string, err error) error {
 	return fmt.Errorf("error creating FlatDBCollection %s: %w", name, err)
 }
 
-func (c *FlatDBCollection) InsertBytes(data []byte) (InsertResult, error) {
+func (c *FlatDBCollection[T]) Insert(data *T) (InsertResult, error) {
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		return InsertResult{}, errInsertingIntoCollection(c.name, err)
+	}
+
+	return c.insertBytes(bytes)
+}
+
+func (c *FlatDBCollection[T]) insertInterface(data interface{}) (InsertResult, error) {
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		return InsertResult{}, errInsertingIntoCollection(c.name, err)
+	}
+
+	return c.insertBytes(bytes)
+}
+
+func (c *FlatDBCollection[T]) insertBytes(data []byte) (InsertResult, error) {
 	id, err := GetNextID(c.idFile)
 	if err != nil {
 		return InsertResult{}, errInsertingIntoCollection(c.name, err)
