@@ -15,7 +15,8 @@ import (
 )
 
 type FlatDB struct {
-	dbDir string
+	dir  string
+	name string
 
 	logger *zap.Logger
 }
@@ -33,11 +34,23 @@ type FlatDBCollection[T any] struct {
 	idFile *os.File
 }
 
-func NewFlatDBCollection[T any](dir string, logger *zap.Logger) (*FlatDBCollection[T], error) {
+func NewFlatDB(dir string, logger *zap.Logger) (*FlatDB, error) {
 	name := filepath.Base(dir)
 
+	dbLogger := logger.With(zap.String("db", name))
+
+	return &FlatDB{
+		name:   name,
+		dir:    dir,
+		logger: dbLogger,
+	}, nil
+}
+
+func NewFlatDBCollection[T any](db *FlatDB, name string, logger *zap.Logger) (*FlatDBCollection[T], error) {
+	dir := filepath.Join(db.dir, name)
+
 	idFilePath := filepath.Join(dir, "id.txt")
-	if err := os.MkdirAll(dir, 777); err != nil { // TODO: think about permissions
+	if err := os.MkdirAll(dir, 0777); err != nil { // TODO: think about permissions
 		return nil, errorCreatingFlatDBCollection(name, err)
 	}
 	idFile, err := os.Open(idFilePath)
@@ -55,10 +68,12 @@ func NewFlatDBCollection[T any](dir string, logger *zap.Logger) (*FlatDBCollecti
 		}
 	}
 
+	collectionLogger := logger.With(zap.String("collection", name))
+
 	return &FlatDBCollection[T]{
 		name:   name,
 		dir:    dir,
-		logger: logger,
+		logger: collectionLogger,
 		idFile: idFile,
 	}, nil
 }
@@ -80,7 +95,9 @@ func (c *FlatDBCollection[T]) GetByID(id uint64) (FlatDBModel[T], error) {
 	if err != nil {
 		return FlatDBModel[T]{}, errorGettingDocumentByID(id, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	bufReader := bufio.NewReader(f)
 	bytes, err := io.ReadAll(bufReader)
@@ -101,7 +118,6 @@ func errorGettingDocumentByID(id uint64, err error) error {
 }
 
 func (c *FlatDBCollection[T]) Insert(data *T) (InsertResult, error) {
-
 	id, err := GetNextID(c.idFile)
 	if err != nil {
 		return InsertResult{}, errInsertingIntoCollection(c.name, err)
@@ -128,7 +144,9 @@ func (c *FlatDBCollection[T]) insertBytes(data []byte, id uint64) (InsertResult,
 	if err != nil {
 		return InsertResult{}, errInsertingIntoCollection(c.name, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	bufWriter := bufio.NewWriter(f)
 	_, err = bufWriter.Write(data)
