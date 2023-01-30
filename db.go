@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 
 	"go.uber.org/zap"
 )
@@ -22,7 +23,7 @@ type FlatDB struct {
 }
 
 type InsertResult struct {
-	Id uint64
+	ID uint64
 }
 
 type FlatDBCollection[T any] struct {
@@ -31,6 +32,7 @@ type FlatDBCollection[T any] struct {
 
 	logger *zap.Logger
 
+	mu     sync.RWMutex
 	idFile *os.File
 }
 
@@ -89,20 +91,26 @@ type FlatDBModel[T any] struct {
 }
 
 func (c *FlatDBCollection[T]) GetByID(id uint64) (FlatDBModel[T], error) {
-	path := documentFilePath(c.dir, documentFileName(id))
+	var bytes []byte
+	{
+		c.mu.RLock()
+		defer c.mu.RUnlock()
 
-	f, err := os.Open(path)
-	if err != nil {
-		return FlatDBModel[T]{}, errorGettingDocumentByID(id, err)
-	}
-	defer func() {
-		_ = f.Close()
-	}()
+		path := documentFilePath(c.dir, documentFileName(id))
 
-	bufReader := bufio.NewReader(f)
-	bytes, err := io.ReadAll(bufReader)
-	if err != nil {
-		return FlatDBModel[T]{}, errorGettingDocumentByID(id, err)
+		f, err := os.Open(path)
+		if err != nil {
+			return FlatDBModel[T]{}, errorGettingDocumentByID(id, err)
+		}
+		defer func() {
+			_ = f.Close()
+		}()
+
+		bufReader := bufio.NewReader(f)
+		bytes, err = io.ReadAll(bufReader)
+		if err != nil {
+			return FlatDBModel[T]{}, errorGettingDocumentByID(id, err)
+		}
 	}
 
 	result := FlatDBModel[T]{}
@@ -118,7 +126,7 @@ func errorGettingDocumentByID(id uint64, err error) error {
 }
 
 func (c *FlatDBCollection[T]) Insert(data *T) (InsertResult, error) {
-	id, err := GetNextID(c.idFile)
+	id, err := c.GetNextID(c.idFile)
 	if err != nil {
 		return InsertResult{}, errInsertingIntoCollection(c.name, err)
 	}
@@ -158,7 +166,7 @@ func (c *FlatDBCollection[T]) insertBytes(data []byte, id uint64) (InsertResult,
 		return InsertResult{}, errInsertingIntoCollection(c.name, err)
 	}
 
-	return InsertResult{Id: id}, nil
+	return InsertResult{ID: id}, nil
 }
 
 func documentFilePath(dir string, filename string) string {
@@ -173,7 +181,10 @@ func documentFileName(id uint64) string {
 	return strconv.FormatUint(id, 10) + ".json"
 }
 
-func GetNextID(idFile *os.File) (uint64, error) {
+func (c *FlatDBCollection[T]) GetNextID(idFile *os.File) (uint64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	curID, err := readID(idFile)
 	if err != nil {
 		return 0, fmt.Errorf("error generating next id: %w", err)
