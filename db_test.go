@@ -1,6 +1,7 @@
 package GoFlatDB
 
 import (
+	"fmt"
 	"math/rand"
 	"strconv"
 	"testing"
@@ -28,7 +29,7 @@ func TestFlatDBCollectionInsertBytes(t *testing.T) {
 
 		res, err := col.Insert(&TestData{Foo: "hello world"})
 		require.NoError(t, err)
-		require.Equal(t, InsertResult{Id: 1}, res)
+		require.Equal(t, InsertResult{ID: 1}, res)
 	})
 
 	t.Run("Inserting of multiple collections of one db works", func(t *testing.T) {
@@ -46,7 +47,7 @@ func TestFlatDBCollectionInsertBytes(t *testing.T) {
 
 			res, err := col.Insert(&TestData{Foo: "hello world"})
 			require.NoError(t, err)
-			require.Equal(t, InsertResult{Id: 1}, res)
+			require.Equal(t, InsertResult{ID: 1}, res)
 		}
 
 		{
@@ -55,7 +56,7 @@ func TestFlatDBCollectionInsertBytes(t *testing.T) {
 
 			res, err := col.Insert(&TestData{Foo: "hello world"})
 			require.NoError(t, err)
-			require.Equal(t, InsertResult{Id: 1}, res)
+			require.Equal(t, InsertResult{ID: 1}, res)
 		}
 	})
 
@@ -78,13 +79,13 @@ func TestFlatDBCollectionInsertBytes(t *testing.T) {
 			{
 				res, err := col.Insert(&TestData{Foo: "hello world"})
 				require.NoError(t, err)
-				require.Equal(t, InsertResult{Id: uint64(i) + 1}, res)
+				require.Equal(t, InsertResult{ID: uint64(i) + 1}, res)
 			}
 
 			{
 				res, err := col2.Insert(&TestData{Foo: "hello world"})
 				require.NoError(t, err)
-				require.Equal(t, InsertResult{Id: uint64(i) + 1}, res)
+				require.Equal(t, InsertResult{ID: uint64(i) + 1}, res)
 			}
 		}
 	})
@@ -107,7 +108,7 @@ func TestFlatDBCollectionGetByID(t *testing.T) {
 		{
 			res, err := col.Insert(&data)
 			require.NoError(t, err)
-			require.Equal(t, InsertResult{Id: 1}, res)
+			require.Equal(t, InsertResult{ID: 1}, res)
 		}
 		{
 			res, err := col.GetByID(1)
@@ -135,7 +136,7 @@ func TestFlatDBCollectionGetByID(t *testing.T) {
 			{
 				res, err := col.Insert(&data)
 				require.NoError(t, err)
-				require.Equal(t, InsertResult{Id: 1}, res)
+				require.Equal(t, InsertResult{ID: 1}, res)
 			}
 			{
 				res, err := col.GetByID(1)
@@ -154,7 +155,7 @@ func TestFlatDBCollectionGetByID(t *testing.T) {
 			{
 				res, err := col.Insert(&data)
 				require.NoError(t, err)
-				require.Equal(t, InsertResult{Id: 1}, res)
+				require.Equal(t, InsertResult{ID: 1}, res)
 			}
 			{
 				res, err := col.GetByID(1)
@@ -186,7 +187,7 @@ func TestFlatDBCollectionGetByID(t *testing.T) {
 			{
 				res, err := col.Insert(&testData)
 				require.NoError(t, err)
-				require.Equal(t, InsertResult{Id: uint64(i) + 1}, res)
+				require.Equal(t, InsertResult{ID: uint64(i) + 1}, res)
 			}
 			{
 				res, err := col.GetByID(uint64(i) + 1)
@@ -197,7 +198,7 @@ func TestFlatDBCollectionGetByID(t *testing.T) {
 			{
 				res, err := col2.Insert(&testData)
 				require.NoError(t, err)
-				require.Equal(t, InsertResult{Id: uint64(i) + 1}, res)
+				require.Equal(t, InsertResult{ID: uint64(i) + 1}, res)
 			}
 			{
 				res, err := col2.GetByID(uint64(i) + 1)
@@ -205,6 +206,46 @@ func TestFlatDBCollectionGetByID(t *testing.T) {
 				require.Equal(t, testData, res.Data)
 				require.Equal(t, uint64(i)+1, res.ID)
 			}
+		}
+	})
+
+	t.Run("Stress test", func(t *testing.T) {
+		dir := t.TempDir()
+
+		logger, err := zap.NewDevelopment()
+		require.NoError(t, err)
+
+		db, err := NewFlatDB(dir, logger)
+		require.NoError(t, err)
+
+		col, err := NewFlatDBCollection[TestData](db, "test-collection", logger)
+		require.NoError(t, err)
+
+		col2, err := NewFlatDBCollection[TestData](db, "test-collection2", logger)
+		require.NoError(t, err)
+
+		for i := 0; i < 100; i++ {
+			i := i
+			t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+				t.Parallel()
+				testData := TestData{Foo: strconv.FormatInt(rand.Int63(), 10)}
+				{
+					insertResult, err := col.Insert(&testData)
+					require.NoError(t, err)
+					res, err := col.GetByID(insertResult.ID)
+					require.NoError(t, err)
+					require.Equal(t, testData, res.Data)
+					require.Equal(t, insertResult.ID, res.ID)
+				}
+				{
+					insertResult, err := col2.Insert(&testData)
+					require.NoError(t, err)
+					res, err := col2.GetByID(insertResult.ID)
+					require.NoError(t, err)
+					require.Equal(t, testData, res.Data)
+					require.Equal(t, insertResult.ID, res.ID)
+				}
+			})
 		}
 	})
 }
@@ -224,6 +265,6 @@ func BenchmarkFlatDBCollection(b *testing.B) {
 
 		res, err := col.Insert(&TestData{Foo: "hello world"})
 		require.NoError(b, err)
-		require.Equal(b, InsertResult{Id: 1}, res)
+		require.Equal(b, InsertResult{ID: 1}, res)
 	})
 }
