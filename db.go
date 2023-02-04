@@ -39,12 +39,11 @@ type FlatDBCollection[T any] struct {
 	name string
 	dir  *os.File
 
-	unorderedIndexes map[string]*flatDBIndexUnorderedIndex
-
 	logger *zap.Logger
 
-	mu     sync.RWMutex
-	idFile *os.File
+	mu               sync.RWMutex
+	idFile           *os.File
+	unorderedIndexes map[string]*flatDBIndexUnorderedIndex
 }
 
 func NewFlatDB(dir string, logger *zap.Logger) (*FlatDB, error) {
@@ -285,6 +284,9 @@ func (c *FlatDBCollection[T]) Insert(data *T) (InsertResult, error) {
 }
 
 func (c *FlatDBCollection[T]) insertBytes(data []byte, id uint64) (InsertResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	fileName := documentFileName(id)
 
 	docFilePath := documentFilePath(c.dir.Name(), fileName)
