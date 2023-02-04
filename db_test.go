@@ -312,13 +312,14 @@ func BenchmarkFlatDBCollection(b *testing.B) {
 		col, err := NewFlatDBCollection[TestData](db, "test-collection", logger)
 		require.NoError(b, err)
 
-		res, err := col.Insert(&TestData{Foo: "hello world"})
-		require.NoError(b, err)
-		require.Equal(b, InsertResult{ID: 1}, res)
+		for i := 0; i < b.N; i++ {
+			_, err := col.Insert(&TestData{Foo: "hello world"})
+			require.NoError(b, err)
+		}
 	})
 
 	b.Run("Insert Concurrent", func(b *testing.B) {
-		numGoroutines := []int{1, 5, 100, 500}
+		numGoroutines := []int{5, 100}
 		for _, curNum := range numGoroutines {
 			b.Run(fmt.Sprintf("insert with %d g", curNum), func(b *testing.B) {
 				b.SetParallelism(curNum)
