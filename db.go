@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 
 	"go.uber.org/zap"
@@ -26,9 +28,18 @@ type InsertResult struct {
 	ID uint64
 }
 
+type flatDBIndexUnorderedIndex struct {
+	ordered   bool
+	fieldName string
+
+	data map[interface{}]string // key - fieldName, val - fileName
+}
+
 type FlatDBCollection[T any] struct {
 	name string
-	dir  string
+	dir  *os.File
+
+	unorderedIndexes map[string]*flatDBIndexUnorderedIndex
 
 	logger *zap.Logger
 
@@ -48,11 +59,18 @@ func NewFlatDB(dir string, logger *zap.Logger) (*FlatDB, error) {
 	}, nil
 }
 
-func NewFlatDBCollection[T any](db *FlatDB, name string, logger *zap.Logger) (*FlatDBCollection[T], error) {
+type FlatDBCollectionOption[T any] func(db *FlatDBCollection[T])
+
+func NewFlatDBCollection[T any](db *FlatDB, name string, logger *zap.Logger, opts ...FlatDBCollectionOption[T]) (*FlatDBCollection[T], error) {
 	dir := filepath.Join(db.dir, name)
 
 	idFilePath := filepath.Join(dir, "id.txt")
 	if err := os.MkdirAll(dir, 0777); err != nil { // TODO: think about permissions
+		return nil, errorCreatingFlatDBCollection(name, err)
+	}
+	// by this point we are sure that dir file exists
+	dirFile, err := os.Open(dir)
+	if err != nil {
 		return nil, errorCreatingFlatDBCollection(name, err)
 	}
 	idFile, err := os.Open(idFilePath)
@@ -72,12 +90,68 @@ func NewFlatDBCollection[T any](db *FlatDB, name string, logger *zap.Logger) (*F
 
 	collectionLogger := logger.With(zap.String("collection", name))
 
-	return &FlatDBCollection[T]{
-		name:   name,
-		dir:    dir,
-		logger: collectionLogger,
-		idFile: idFile,
-	}, nil
+	col := &FlatDBCollection[T]{
+		name:             name,
+		dir:              dirFile,
+		logger:           collectionLogger,
+		idFile:           idFile,
+		unorderedIndexes: map[string]*flatDBIndexUnorderedIndex{},
+	}
+
+	for _, opt := range opts {
+		opt(col)
+	}
+
+	return col, nil
+}
+
+func (c *FlatDBCollection[T]) Init() error {
+	c.logger.Info("running init...")
+
+	if len(c.unorderedIndexes) == 0 {
+		return nil
+	}
+
+	files, err := os.ReadDir(c.dir.Name())
+	if err != nil {
+		return errorInitializingFlatDBCollection(c.dir.Name(), err)
+	}
+
+	for _, f := range files {
+		if !strings.HasSuffix(f.Name(), ".json") {
+			continue
+		}
+
+		docPath := documentFilePath(c.dir.Name(), f.Name())
+		doc, err := c.readDocument(docPath)
+		if err != nil {
+			return errorInitializingFlatDBCollection(c.dir.Name(), err)
+		}
+
+		c.updateIndexes(doc)
+	}
+
+	return nil
+}
+
+func (c *FlatDBCollection[T]) updateIndexes(doc FlatDBModel[T]) {
+	refVal := reflect.ValueOf(doc.Data)
+	for _, index := range c.unorderedIndexes {
+		fieldVal := refVal.FieldByName(index.fieldName)
+		if !fieldVal.IsValid() {
+			continue
+		}
+
+		fileName := documentFileName(doc.ID)
+
+		c.mu.Lock()
+		index.data[fieldVal.Interface()] = fileName
+		c.mu.Unlock()
+	}
+}
+
+func errorInitializingFlatDBCollection(name string, err error) error {
+	return fmt.Errorf("error initializing FlatDBCollection %s: %w", name, err)
 }
 
 func errorCreatingFlatDBCollection(name string, err error) error {
@@ -90,17 +164,78 @@ type FlatDBModel[T any] struct {
 	ID uint64 `json:"ID"`
 }
 
-func (c *FlatDBCollection[T]) GetByID(id uint64) (FlatDBModel[T], error) {
-	var bytes []byte
+func (c *FlatDBCollection[T]) FindBy(fieldName string, fieldValue interface{}) (FlatDBModel[T], error) {
 	{
 		c.mu.RLock()
 		defer c.mu.RUnlock()
 
-		path := documentFilePath(c.dir, documentFileName(id))
+		idx := c.unorderedIndexes[fieldName]
+		if idx != nil {
+			fileName, ok := idx.data[fieldValue]
+			if !ok {
+				return FlatDBModel[T]{}, DocumentNotFound
+			}
 
-		f, err := os.Open(path)
+			documentPath := documentFilePath(c.dir.Name(), fileName)
+			doc, err := c.readDocument(documentPath)
+			if err != nil {
+				return FlatDBModel[T]{}, errorFindBy(fieldName, fieldValue, err)
+			}
+
+			return doc, nil
+		}
+	}
+
+	c.logger.Info("running full scan in FindBy query", zap.String("fieldName", fieldName), zap.Any("fieldValue", fieldValue))
+
+	files, err := os.ReadDir(fieldName)
+	if err != nil {
+		return FlatDBModel[T]{}, errorFindBy(fieldName, fieldValue, err)
+	}
+
+	for _, f := range files {
+		doc, err := c.readDocument(documentFilePath(c.dir.Name(), f.Name()))
 		if err != nil {
-			return FlatDBModel[T]{}, errorGettingDocumentByID(id, err)
+			return FlatDBModel[T]{}, errorFindBy(fieldName, fieldValue, err)
+		}
+
+		val := reflect.ValueOf(doc.Data).FieldByName(fieldName)
+		if !val.IsValid() {
+			continue
+		}
+
+		if !reflect.DeepEqual(val, fieldValue) {
+			continue
+		}
+
+		return doc, nil
+	}
+
+	return FlatDBModel[T]{}, DocumentNotFound
+}
+
+func errorFindBy(fieldName string, val interface{}, err error) error {
+	return fmt.Errorf("error findBy %s=%v: %w", fieldName, val, err)
+}
+
+func (c *FlatDBCollection[T]) GetByID(id uint64) (FlatDBModel[T], error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	doc, err := c.readDocument(documentFilePath(c.dir.Name(), documentFileName(id)))
+	if err != nil {
+		return FlatDBModel[T]{}, errorGettingDocumentByID(id, err)
+	}
+
+	return doc, nil
+}
+
+func (c *FlatDBCollection[T]) readDocument(documentPath string) (FlatDBModel[T], error) {
+	var bytes []byte
+	{
+		f, err := os.Open(documentPath)
+		if err != nil {
+			return FlatDBModel[T]{}, errorReadingDocument(documentPath, err)
 		}
 		defer func() {
 			_ = f.Close()
@@ -109,16 +244,20 @@ func (c *FlatDBCollection[T]) GetByID(id uint64) (FlatDBModel[T], error) {
 		bufReader := bufio.NewReader(f)
 		bytes, err = io.ReadAll(bufReader)
 		if err != nil {
-			return FlatDBModel[T]{}, errorGettingDocumentByID(id, err)
+			return FlatDBModel[T]{}, errorReadingDocument(documentPath, err)
 		}
 	}
 
 	result := FlatDBModel[T]{}
 	if err := json.Unmarshal(bytes, &result); err != nil {
-		return result, errorGettingDocumentByID(id, err)
+		return result, errorReadingDocument(documentPath, err)
 	}
 
 	return result, nil
+}
+
+func errorReadingDocument(documentPath string, err error) error {
+	return fmt.Errorf("error reading document %s: %w", documentPath, err)
 }
 
 func errorGettingDocumentByID(id uint64, err error) error {
@@ -140,13 +279,15 @@ func (c *FlatDBCollection[T]) Insert(data *T) (InsertResult, error) {
 		return InsertResult{}, errInsertingIntoCollection(c.name, err)
 	}
 
+	c.updateIndexes(model)
+
 	return c.insertBytes(bytes, id)
 }
 
 func (c *FlatDBCollection[T]) insertBytes(data []byte, id uint64) (InsertResult, error) {
 	fileName := documentFileName(id)
 
-	docFilePath := documentFilePath(c.dir, fileName)
+	docFilePath := documentFilePath(c.dir.Name(), fileName)
 
 	f, err := os.Create(docFilePath) // TODO: think about permissions
 	if err != nil {
@@ -167,6 +308,21 @@ func (c *FlatDBCollection[T]) insertBytes(data []byte, id uint64) (InsertResult,
 	}
 
 	return InsertResult{ID: id}, nil
+}
+
+func (c *FlatDBCollection[T]) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.idFile.Close(); err != nil {
+		c.logger.Error("error closing id file", zap.Error(err))
+	}
+
+	if err := c.dir.Close(); err != nil {
+		c.logger.Error("error closing dir file", zap.Error(err))
+	}
+
+	return nil
 }
 
 func documentFilePath(dir string, filename string) string {

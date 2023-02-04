@@ -91,6 +91,55 @@ func TestFlatDBCollectionInsertBytes(t *testing.T) {
 	})
 }
 
+func TestFlatDBCollectionInit(t *testing.T) {
+	dir := t.TempDir()
+
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	db, err := NewFlatDB(dir, logger)
+	require.NoError(t, err)
+
+	{
+		col, err := NewFlatDBCollection[TestData](db, "test-collection", logger, WithUnorderedIndex[TestData]("Foo"))
+		require.NoError(t, err)
+
+		err = col.Init()
+		require.NoError(t, err)
+
+		data := TestData{Foo: "hello world"}
+		{
+			res, err := col.Insert(&data)
+			require.NoError(t, err)
+			require.Equal(t, InsertResult{ID: 1}, res)
+		}
+		{
+			res, err := col.GetByID(1)
+			require.NoError(t, err)
+
+			require.Equal(t, data, res.Data)
+			require.Equal(t, uint64(1), res.ID)
+		}
+
+		err = col.Close()
+		require.NoError(t, err)
+	}
+	{
+		col, err := NewFlatDBCollection[TestData](db, "test-collection", logger, WithUnorderedIndex[TestData]("Foo"))
+		require.NoError(t, err)
+
+		err = col.Init()
+		require.NoError(t, err)
+
+		doc, err := col.FindBy("Foo", "hello world")
+		require.NoError(t, err)
+
+		data := TestData{Foo: "hello world"}
+		require.Equal(t, data, doc.Data)
+		require.Equal(t, uint64(1), doc.ID)
+	}
+}
+
 func TestFlatDBCollectionGetByID(t *testing.T) {
 	t.Run("Simple GetByID works", func(t *testing.T) {
 		dir := t.TempDir()
@@ -266,5 +315,78 @@ func BenchmarkFlatDBCollection(b *testing.B) {
 		res, err := col.Insert(&TestData{Foo: "hello world"})
 		require.NoError(b, err)
 		require.Equal(b, InsertResult{ID: 1}, res)
+	})
+
+	b.Run("Insert Concurrent", func(b *testing.B) {
+		numGoroutines := []int{1, 5, 100, 500}
+		for _, curNum := range numGoroutines {
+			b.Run(fmt.Sprintf("insert with %d g", curNum), func(b *testing.B) {
+				b.SetParallelism(curNum)
+
+				dir := b.TempDir()
+
+				logger, err := zap.NewDevelopment()
+				require.NoError(b, err)
+
+				db, err := NewFlatDB(dir, logger)
+				require.NoError(b, err)
+
+				col, err := NewFlatDBCollection[TestData](db, "test-collection", logger)
+				require.NoError(b, err)
+
+				b.RunParallel(func(pb *testing.PB) {
+					for pb.Next() {
+						_, err := col.Insert(&TestData{Foo: "hello world"})
+						require.NoError(b, err)
+					}
+				})
+			})
+		}
+	})
+
+	b.Run("Insert With Index", func(b *testing.B) {
+		dir := b.TempDir()
+
+		logger, err := zap.NewDevelopment()
+		require.NoError(b, err)
+
+		db, err := NewFlatDB(dir, logger)
+		require.NoError(b, err)
+
+		col, err := NewFlatDBCollection[TestData](db, "test-collection", logger, WithUnorderedIndex[TestData]("Foo"))
+		require.NoError(b, err)
+
+		b.ResetTimer()
+
+		res, err := col.Insert(&TestData{Foo: "hello world"})
+		require.NoError(b, err)
+		require.Equal(b, InsertResult{ID: 1}, res)
+	})
+
+	b.Run("Insert Concurrent With Index", func(b *testing.B) {
+		numGoroutines := []int{1, 5, 100, 500}
+		for _, curNum := range numGoroutines {
+			b.Run(fmt.Sprintf("insert with index with %d g", curNum), func(b *testing.B) {
+				b.SetParallelism(curNum)
+
+				dir := b.TempDir()
+
+				logger, err := zap.NewDevelopment()
+				require.NoError(b, err)
+
+				db, err := NewFlatDB(dir, logger)
+				require.NoError(b, err)
+
+				col, err := NewFlatDBCollection[TestData](db, "test-collection", logger, WithUnorderedIndex[TestData]("Foo"))
+				require.NoError(b, err)
+
+				b.RunParallel(func(pb *testing.PB) {
+					for pb.Next() {
+						_, err := col.Insert(&TestData{Foo: "hello world"})
+						require.NoError(b, err)
+					}
+				})
+			})
+		}
 	})
 }
