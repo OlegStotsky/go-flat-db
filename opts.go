@@ -6,7 +6,7 @@ func WithUnorderedIndex[T any](fieldName string) FlatDBCollectionOption[T] {
 			ordered:   false,
 			fieldName: fieldName,
 
-			data: map[interface{}]string{},
+			data: map[interface{}][]string{},
 		}
 	}
 }

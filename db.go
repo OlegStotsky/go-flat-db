@@ -32,19 +32,18 @@ type flatDBIndexUnorderedIndex struct {
 	ordered   bool
 	fieldName string
 
-	data map[interface{}]string // key - fieldName, val - fileName
+	data map[interface{}][]string // key - fieldName, val - fileNames
 }
 
 type FlatDBCollection[T any] struct {
 	name string
 	dir  *os.File
 
-	unorderedIndexes map[string]*flatDBIndexUnorderedIndex
-
 	logger *zap.Logger
 
-	mu     sync.RWMutex
-	idFile *os.File
+	mu               sync.RWMutex
+	idFile           *os.File
+	unorderedIndexes map[string]*flatDBIndexUnorderedIndex
 }
 
 func NewFlatDB(dir string, logger *zap.Logger) (*FlatDB, error) {
@@ -134,6 +133,13 @@ func (c *FlatDBCollection[T]) Init() error {
 	return nil
 }
 
+func (c *FlatDBCollection[T]) QueryBuilder() *QueryBuilder[T] {
+	return &QueryBuilder[T]{
+		col: c,
+		Q:   &NopQuery[T]{},
+	}
+}
+
 func (c *FlatDBCollection[T]) updateIndexes(doc FlatDBModel[T]) {
 	refVal := reflect.ValueOf(doc.Data)
 	for _, index := range c.unorderedIndexes {
@@ -145,7 +151,7 @@ func (c *FlatDBCollection[T]) updateIndexes(doc FlatDBModel[T]) {
 		fileName := documentFileName(doc.ID)
 
 		c.mu.Lock()
-		index.data[fieldVal.Interface()] = fileName
+		index.data[fieldVal.Interface()] = append(index.data[fieldVal.Interface()], fileName)
 		c.mu.Unlock()
 	}
 }
@@ -164,39 +170,47 @@ type FlatDBModel[T any] struct {
 	ID uint64 `json:"ID"`
 }
 
-func (c *FlatDBCollection[T]) FindBy(fieldName string, fieldValue interface{}) (FlatDBModel[T], error) {
+func (c *FlatDBCollection[T]) findBy(fieldName string, fieldValue interface{}) ([]FlatDBModel[T], error) {
+	res := []FlatDBModel[T]{}
 	{
 		c.mu.RLock()
 		defer c.mu.RUnlock()
 
 		idx := c.unorderedIndexes[fieldName]
 		if idx != nil {
-			fileName, ok := idx.data[fieldValue]
+			fileNames, ok := idx.data[fieldValue]
 			if !ok {
-				return FlatDBModel[T]{}, DocumentNotFound
+				return []FlatDBModel[T]{}, DocumentNotFound
 			}
 
-			documentPath := documentFilePath(c.dir.Name(), fileName)
-			doc, err := c.readDocument(documentPath)
-			if err != nil {
-				return FlatDBModel[T]{}, errorFindBy(fieldName, fieldValue, err)
+			for _, docFileName := range fileNames {
+				documentPath := documentFilePath(c.dir.Name(), docFileName)
+				doc, err := c.readDocument(documentPath)
+				if err != nil {
+					return []FlatDBModel[T]{}, errorFindBy(fieldName, fieldValue, err)
+				}
+				res = append(res, doc)
 			}
 
-			return doc, nil
+			return res, nil
 		}
 	}
 
-	c.logger.Info("running full scan in FindBy query", zap.String("fieldName", fieldName), zap.Any("fieldValue", fieldValue))
+	c.logger.Info("running full scan in findBy query", zap.String("fieldName", fieldName), zap.Any("fieldValue", fieldValue))
 
-	files, err := os.ReadDir(fieldName)
+	files, err := os.ReadDir(c.dir.Name())
 	if err != nil {
-		return FlatDBModel[T]{}, errorFindBy(fieldName, fieldValue, err)
+		return []FlatDBModel[T]{}, errorFindBy(fieldName, fieldValue, err)
 	}
 
 	for _, f := range files {
+		if !strings.HasSuffix(f.Name(), ".json") {
+			continue
+		}
+
 		doc, err := c.readDocument(documentFilePath(c.dir.Name(), f.Name()))
 		if err != nil {
-			return FlatDBModel[T]{}, errorFindBy(fieldName, fieldValue, err)
+			return []FlatDBModel[T]{}, errorFindBy(fieldName, fieldValue, err)
 		}
 
 		val := reflect.ValueOf(doc.Data).FieldByName(fieldName)
@@ -204,18 +218,48 @@ func (c *FlatDBCollection[T]) FindBy(fieldName string, fieldValue interface{}) (
 			continue
 		}
 
-		if !reflect.DeepEqual(val, fieldValue) {
+		if !reflect.DeepEqual(val.Interface(), fieldValue) {
 			continue
 		}
 
-		return doc, nil
+		res = append(res, doc)
 	}
 
-	return FlatDBModel[T]{}, DocumentNotFound
+	return res, nil
+}
+
+func (c *FlatDBCollection[T]) findAll() ([]FlatDBModel[T], error) {
+	res := []FlatDBModel[T]{}
+
+	c.logger.Info("running full scan")
+
+	files, err := os.ReadDir(c.dir.Name())
+	if err != nil {
+		return []FlatDBModel[T]{}, errorFindAll(err)
+	}
+
+	for _, f := range files {
+		if !strings.HasSuffix(f.Name(), ".json") {
+			continue
+		}
+
+		doc, err := c.readDocument(documentFilePath(c.dir.Name(), f.Name()))
+		if err != nil {
+			return []FlatDBModel[T]{}, errorFindAll(err)
+		}
+
+		res = append(res, doc)
+	}
+
+	return res, nil
 }
 
 func errorFindBy(fieldName string, val interface{}, err error) error {
 	return fmt.Errorf("error findBy %s=%v: %w", fieldName, val, err)
+}
+
+func errorFindAll(err error) error {
+	return fmt.Errorf("error findAll: %w", err)
 }
 
 func (c *FlatDBCollection[T]) GetByID(id uint64) (FlatDBModel[T], error) {
@@ -232,20 +276,18 @@ func (c *FlatDBCollection[T]) GetByID(id uint64) (FlatDBModel[T], error) {
 
 func (c *FlatDBCollection[T]) readDocument(documentPath string) (FlatDBModel[T], error) {
 	var bytes []byte
-	{
-		f, err := os.Open(documentPath)
-		if err != nil {
-			return FlatDBModel[T]{}, errorReadingDocument(documentPath, err)
-		}
-		defer func() {
-			_ = f.Close()
-		}()
+	f, err := os.Open(documentPath)
+	if err != nil {
+		return FlatDBModel[T]{}, errorReadingDocument(documentPath, err)
+	}
+	defer func() {
+		_ = f.Close()
+	}()
 
-		bufReader := bufio.NewReader(f)
-		bytes, err = io.ReadAll(bufReader)
-		if err != nil {
-			return FlatDBModel[T]{}, errorReadingDocument(documentPath, err)
-		}
+	bufReader := bufio.NewReader(f)
+	bytes, err = io.ReadAll(bufReader)
+	if err != nil {
+		return FlatDBModel[T]{}, errorReadingDocument(documentPath, err)
 	}
 
 	result := FlatDBModel[T]{}
@@ -285,6 +327,9 @@ func (c *FlatDBCollection[T]) Insert(data *T) (InsertResult, error) {
 }
 
 func (c *FlatDBCollection[T]) insertBytes(data []byte, id uint64) (InsertResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	fileName := documentFileName(id)
 
 	docFilePath := documentFilePath(c.dir.Name(), fileName)
