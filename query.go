@@ -46,6 +46,16 @@ func (c *QueryBuilder[T]) Where(fieldName string, operator string, fieldValue in
 	return c
 }
 
+func (c *QueryBuilder[T]) Select() *QueryBuilder[T] {
+	selectQuery := SelectQuery[T]{
+		col: c.col,
+	}
+
+	c.Q = &selectQuery
+
+	return c
+}
+
 func (c *QueryBuilder[T]) And(q *QueryBuilder[T]) *QueryBuilder[T] {
 	andQuery := AndQuery[T]{
 		col: c.col,
@@ -68,6 +78,18 @@ func (c *QueryBuilder[T]) Or(q *QueryBuilder[T]) *QueryBuilder[T] {
 	}
 
 	c.Q = &orQuery
+
+	return c
+}
+
+func (c *QueryBuilder[T]) Limit(n uint64) *QueryBuilder[T] {
+	limitQuery := LimitQuery[T]{
+		col:   c.col,
+		q:     c.Q,
+		limit: n,
+	}
+
+	c.Q = &limitQuery
 
 	return c
 }
@@ -182,6 +204,46 @@ func (c *OrQuery[T]) Execute() ([]FlatDBModel[T], error) {
 	}
 
 	return result, nil
+}
+
+type LimitQuery[T any] struct {
+	col *FlatDBCollection[T]
+
+	q Query[T]
+
+	limit uint64
+}
+
+func (c *LimitQuery[T]) Execute() ([]FlatDBModel[T], error) {
+	docs, err := c.q.Execute()
+	if err != nil {
+		return nil, fmt.Errorf("error executing limit query: %w", err)
+	}
+
+	result := make([]FlatDBModel[T], 0, c.limit)
+
+	n := c.limit
+	if uint64(len(result)) < c.limit {
+		n = uint64(len(result))
+	}
+	for i := uint64(0); i < n; i++ {
+		result = append(result, docs[i])
+	}
+
+	return result, nil
+}
+
+type SelectQuery[T any] struct {
+	col *FlatDBCollection[T]
+}
+
+func (c *SelectQuery[T]) Execute() ([]FlatDBModel[T], error) {
+	docs, err := c.col.findAll()
+	if err != nil {
+		return nil, fmt.Errorf("error executing select query: %w", err)
+	}
+
+	return docs, nil
 }
 
 func parseOperator(op string) (QueryOperator, error) {

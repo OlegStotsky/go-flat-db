@@ -228,8 +228,38 @@ func (c *FlatDBCollection[T]) findBy(fieldName string, fieldValue interface{}) (
 	return res, nil
 }
 
+func (c *FlatDBCollection[T]) findAll() ([]FlatDBModel[T], error) {
+	res := []FlatDBModel[T]{}
+
+	c.logger.Info("running full scan")
+
+	files, err := os.ReadDir(c.dir.Name())
+	if err != nil {
+		return []FlatDBModel[T]{}, errorFindAll(err)
+	}
+
+	for _, f := range files {
+		if !strings.HasSuffix(f.Name(), ".json") {
+			continue
+		}
+
+		doc, err := c.readDocument(documentFilePath(c.dir.Name(), f.Name()))
+		if err != nil {
+			return []FlatDBModel[T]{}, errorFindAll(err)
+		}
+
+		res = append(res, doc)
+	}
+
+	return res, nil
+}
+
 func errorFindBy(fieldName string, val interface{}, err error) error {
 	return fmt.Errorf("error findBy %s=%v: %w", fieldName, val, err)
+}
+
+func errorFindAll(err error) error {
+	return fmt.Errorf("error findAll: %w", err)
 }
 
 func (c *FlatDBCollection[T]) GetByID(id uint64) (FlatDBModel[T], error) {

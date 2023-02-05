@@ -310,6 +310,37 @@ func TestQuery(t *testing.T) {
 			require.True(t, checkEqual(docs1, docs2))
 		})
 	})
+
+	t.Run("simple limit query test", func(t *testing.T) {
+		dir := t.TempDir()
+
+		logger, err := zap.NewDevelopment()
+		require.NoError(t, err)
+
+		db, err := NewFlatDB(dir, logger)
+		require.NoError(t, err)
+
+		col, err := NewFlatDBCollection[queryTestData](db, "test-collection", logger)
+		require.NoError(t, err)
+
+		for i := 0; i < 10000; i++ {
+			foo := fmt.Sprintf("%d", rand.Intn(10))
+			bar := fmt.Sprintf("%d", rand.Intn(10))
+			baz := fmt.Sprintf("%d", rand.Intn(10))
+
+			_, err := col.Insert(&queryTestData{
+				foo,
+				bar,
+				baz,
+			})
+			require.NoError(t, err)
+		}
+
+		res, err := col.QueryBuilder().Select().Limit(100).Execute()
+		require.NoError(t, err)
+
+		require.Equal(t, 100, len(res))
+	})
 }
 
 func checkEqual[T any](t1 []FlatDBModel[T], t2 []FlatDBModel[T]) bool {
