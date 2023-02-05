@@ -32,7 +32,7 @@ type flatDBIndexUnorderedIndex struct {
 	ordered   bool
 	fieldName string
 
-	data map[interface{}][]string // key - fieldName, val - fileName
+	data map[interface{}][]string // key - fieldName, val - fileNames
 }
 
 type FlatDBCollection[T any] struct {
