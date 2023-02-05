@@ -59,6 +59,19 @@ func (c *QueryBuilder[T]) And(q *QueryBuilder[T]) *QueryBuilder[T] {
 	return c
 }
 
+func (c *QueryBuilder[T]) Or(q *QueryBuilder[T]) *QueryBuilder[T] {
+	orQuery := OrQuery[T]{
+		col: c.col,
+
+		left:  c.Q,
+		right: q.Q,
+	}
+
+	c.Q = &orQuery
+
+	return c
+}
+
 func (c *QueryBuilder[T]) Execute() ([]FlatDBModel[T], error) {
 	return c.Q.Execute()
 }
@@ -124,6 +137,48 @@ func (c *AndQuery[T]) Execute() ([]FlatDBModel[T], error) {
 		if _, ok := leftSet[doc.ID]; ok {
 			result = append(result, doc)
 		}
+	}
+
+	return result, nil
+}
+
+type OrQuery[T any] struct {
+	col *FlatDBCollection[T]
+
+	left  Query[T]
+	right Query[T]
+
+	err error
+}
+
+func (c *OrQuery[T]) Execute() ([]FlatDBModel[T], error) {
+	leftResult, err := c.left.Execute()
+	if err != nil {
+		return nil, fmt.Errorf("error executing and query: %w", err)
+	}
+
+	rightResult, err := c.right.Execute()
+	if err != nil {
+		return nil, fmt.Errorf("error executing and query: %w", err)
+	}
+
+	leftSet := map[uint64]struct{}{}
+	for _, doc := range leftResult {
+		leftSet[doc.ID] = struct{}{}
+	}
+
+	result := []FlatDBModel[T]{}
+
+	for _, doc := range leftResult {
+		result = append(result, doc)
+	}
+
+	for _, doc := range rightResult {
+		if _, ok := leftSet[doc.ID]; ok {
+			continue
+		}
+
+		result = append(result, doc)
 	}
 
 	return result, nil
