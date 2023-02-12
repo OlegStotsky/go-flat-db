@@ -1,4 +1,4 @@
-module GoFlatDB
+module github.com/OlegStotsky/goflatdb
 
 go 1.20
 
