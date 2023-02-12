@@ -72,7 +72,7 @@ func NewFlatDBCollection[T any](db *FlatDB, name string, logger *zap.Logger, opt
 	if err != nil {
 		return nil, errorCreatingFlatDBCollection(name, err)
 	}
-	idFile, err := os.Open(idFilePath)
+	idFile, err := os.OpenFile(idFilePath, os.O_RDWR, 0777)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			idFile, err = os.Create(idFilePath)
