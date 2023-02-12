@@ -10,7 +10,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"GoFlatDB"
+	"goflatdb"
 )
 
 type TestData struct {
@@ -28,11 +28,11 @@ func main() {
 		panic(err)
 	}
 	logger, _ := zap.NewProduction()
-	db, err := GoFlatDB.NewFlatDB(dir, logger)
+	db, err := goflatdb.NewFlatDB(dir, logger)
 	if err != nil {
 		panic(err)
 	}
-	col, err := GoFlatDB.NewFlatDBCollection[TestData](db, "bench", logger)
+	col, err := goflatdb.NewFlatDBCollection[TestData](db, "bench", logger)
 	if err != nil {
 		panic(err)
 	}

@@ -1,4 +1,4 @@
-package GoFlatDB
+package goflatdb
 
 import "fmt"
 
@@ -223,7 +223,7 @@ func (c *LimitQuery[T]) Execute() ([]FlatDBModel[T], error) {
 	result := make([]FlatDBModel[T], 0, c.limit)
 
 	n := c.limit
-	if uint64(len(result)) < c.limit {
+	if uint64(len(docs)) < c.limit {
 		n = uint64(len(result))
 	}
 	for i := uint64(0); i < n; i++ {

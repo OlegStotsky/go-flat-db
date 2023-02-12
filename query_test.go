@@ -1,4 +1,4 @@
-package GoFlatDB
+package goflatdb
 
 import (
 	"fmt"

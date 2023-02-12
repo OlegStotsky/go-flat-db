@@ -1,4 +1,4 @@
-module GoFlatDB
+module goflatdb
 
 go 1.20
 

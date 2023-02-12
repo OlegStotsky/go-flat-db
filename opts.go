@@ -1,4 +1,4 @@
-package GoFlatDB
+package goflatdb
 
 func WithUnorderedIndex[T any](fieldName string) FlatDBCollectionOption[T] {
 	return func(db *FlatDBCollection[T]) {
