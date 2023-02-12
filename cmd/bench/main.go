@@ -10,7 +10,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"goflatdb"
+	"github.com/OlegStotsky/goflatdb"
 )
 
 type TestData struct {
