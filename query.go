@@ -82,11 +82,23 @@ func (c *QueryBuilder[T]) Or(q *QueryBuilder[T]) *QueryBuilder[T] {
 	return c
 }
 
-func (c *QueryBuilder[T]) Limit(n uint64) *QueryBuilder[T] {
+func (c *QueryBuilder[T]) Limit(n int) *QueryBuilder[T] {
 	limitQuery := LimitQuery[T]{
 		col:   c.col,
 		q:     c.Q,
 		limit: n,
+	}
+
+	c.Q = &limitQuery
+
+	return c
+}
+
+func (c *QueryBuilder[T]) Offset(n int) *QueryBuilder[T] {
+	limitQuery := OffsetQuery[T]{
+		col:    c.col,
+		q:      c.Q,
+		offset: n,
 	}
 
 	c.Q = &limitQuery
@@ -211,7 +223,7 @@ type LimitQuery[T any] struct {
 
 	q Query[T]
 
-	limit uint64
+	limit int
 }
 
 func (c *LimitQuery[T]) Execute() ([]FlatDBModel[T], error) {
@@ -223,14 +235,35 @@ func (c *LimitQuery[T]) Execute() ([]FlatDBModel[T], error) {
 	result := make([]FlatDBModel[T], 0, c.limit)
 
 	n := c.limit
-	if uint64(len(docs)) < c.limit {
-		n = uint64(len(result))
+	if len(docs) < c.limit {
+		n = len(result)
 	}
-	for i := uint64(0); i < n; i++ {
+	for i := 0; i < n; i++ {
 		result = append(result, docs[i])
 	}
 
 	return result, nil
+}
+
+type OffsetQuery[T any] struct {
+	col *FlatDBCollection[T]
+
+	q Query[T]
+
+	offset int
+}
+
+func (c *OffsetQuery[T]) Execute() ([]FlatDBModel[T], error) {
+	docs, err := c.q.Execute()
+	if err != nil {
+		return nil, fmt.Errorf("error executing limit query: %w", err)
+	}
+
+	if len(docs) == 0 || c.offset >= len(docs) {
+		return []FlatDBModel[T]{}, nil
+	}
+
+	return docs[c.offset:], nil
 }
 
 type SelectQuery[T any] struct {
