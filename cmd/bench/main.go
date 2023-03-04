@@ -36,9 +36,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if err := col.Init(); err != nil {
-		panic(err)
-	}
 
 	start := time.Now()
 	end := start.Add(*durF)

@@ -101,6 +101,10 @@ func NewFlatDBCollection[T any](db *FlatDB, name string, logger *zap.Logger, opt
 		opt(col)
 	}
 
+	if err := col.Init(); err != nil {
+		return nil, err
+	}
+
 	return col, nil
 }
 

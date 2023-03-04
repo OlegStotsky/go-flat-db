@@ -341,6 +341,99 @@ func TestQuery(t *testing.T) {
 
 		require.Equal(t, 100, len(res))
 	})
+
+	t.Run("limit query test", func(t *testing.T) {
+		t.Run("works for empty array", func(t *testing.T) {
+			dir := t.TempDir()
+
+			logger, err := zap.NewDevelopment()
+			require.NoError(t, err)
+
+			db, err := NewFlatDB(dir, logger)
+			require.NoError(t, err)
+
+			col, err := NewFlatDBCollection[queryTestData](db, "test-collection", logger)
+			require.NoError(t, err)
+
+			res, err := col.QueryBuilder().Select().Offset(5).Execute()
+			require.NoError(t, err)
+
+			require.Equal(t, 0, len(res))
+		})
+
+		t.Run("works for one element array", func(t *testing.T) {
+			dir := t.TempDir()
+
+			logger, err := zap.NewDevelopment()
+			require.NoError(t, err)
+
+			db, err := NewFlatDB(dir, logger)
+			require.NoError(t, err)
+
+			col, err := NewFlatDBCollection[queryTestData](db, "test-collection", logger)
+			require.NoError(t, err)
+
+			data := queryTestData{
+				Foo: "123",
+				Bar: "456",
+				Baz: "789",
+			}
+			_, err = col.Insert(&data)
+			require.NoError(t, err)
+
+			res, err := col.QueryBuilder().Select().Offset(0).Execute()
+			require.NoError(t, err)
+
+			require.Equal(t, 1, len(res))
+			require.Equal(t, data, res[0].Data)
+
+			res2, err := col.QueryBuilder().Select().Offset(1).Execute()
+			require.NoError(t, err)
+
+			require.Equal(t, 0, len(res2))
+		})
+
+		t.Run("works for two element array", func(t *testing.T) {
+			dir := t.TempDir()
+
+			logger, err := zap.NewDevelopment()
+			require.NoError(t, err)
+
+			db, err := NewFlatDB(dir, logger)
+			require.NoError(t, err)
+
+			col, err := NewFlatDBCollection[queryTestData](db, "test-collection", logger)
+			require.NoError(t, err)
+
+			data := queryTestData{
+				Foo: "123",
+				Bar: "456",
+				Baz: "789",
+			}
+			_, err = col.Insert(&data)
+			require.NoError(t, err)
+
+			data2 := queryTestData{
+				Foo: "555",
+				Bar: "333",
+				Baz: "777",
+			}
+			_, err = col.Insert(&data2)
+			require.NoError(t, err)
+
+			res, err := col.QueryBuilder().Select().Offset(0).Execute()
+			require.NoError(t, err)
+
+			require.Equal(t, 2, len(res))
+			require.Equal(t, data, res[0].Data)
+
+			res2, err := col.QueryBuilder().Select().Offset(1).Execute()
+			require.NoError(t, err)
+
+			require.Equal(t, 1, len(res2))
+			require.Equal(t, data2, res2[0].Data)
+		})
+	})
 }
 
 func checkEqual[T any](t1 []FlatDBModel[T], t2 []FlatDBModel[T]) bool {

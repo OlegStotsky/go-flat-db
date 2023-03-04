@@ -105,8 +105,6 @@ func TestFlatDBCollectionInit(t *testing.T) {
 		col, err := NewFlatDBCollection[testData](db, "test-collection", logger, WithUnorderedIndex[testData]("Foo"))
 		require.NoError(t, err)
 
-		err = col.Init()
-		require.NoError(t, err)
 		{
 			res, err := col.Insert(&data)
 			require.NoError(t, err)
@@ -123,9 +121,6 @@ func TestFlatDBCollectionInit(t *testing.T) {
 	}
 	{
 		col, err := NewFlatDBCollection[testData](db, "test-collection", logger, WithUnorderedIndex[testData]("Foo"))
-		require.NoError(t, err)
-
-		err = col.Init()
 		require.NoError(t, err)
 
 		docs, err := col.findBy("Foo", "hello world")
